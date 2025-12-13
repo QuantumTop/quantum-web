@@ -48,6 +48,11 @@ on:
         required: false
         default: 'lunarstra-quantum'
         type: string
+      repository-path:
+        description: 'Maven repository username'
+        required: false
+        default: 'QuantumTop/quantum-web'
+        type: string
   workflow_call:
     inputs:
       java-version:
@@ -103,6 +108,11 @@ on:
       artifact-version:
         description: 'Version of the deployed artifact'
         value: ${{ jobs.build-deploy.outputs.version }}
+      repository-path:
+        description: 'Maven repository username'
+        required: false
+        default: 'QuantumTop/quantum-web'
+        type: string
 
 jobs:
   parent-deploy:
@@ -129,7 +139,10 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
+        with:
+          repository: ${{ inputs.repository-path }}   # 👈 显式指定
+          ref: ${{ github.ref }}
+          
       - name: Set up JDK ${{ inputs.java-version }}
         uses: actions/setup-java@v4
         with:
