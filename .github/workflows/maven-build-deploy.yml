@@ -255,6 +255,7 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Component** | **quantum-web** |" >> $GITHUB_STEP_SUMMARY
           echo "| **Artifact Version** | \`${{ steps.get-version.outputs.version }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| **Repository** | ${{ inputs.repository-url }} |" >> $GITHUB_STEP_SUMMARY
           echo "| **Server ID** | ${{ inputs.server-id }} |" >> $GITHUB_STEP_SUMMARY
