@@ -48,7 +48,7 @@ on:
         required: false
         default: 'lunarstra-quantum'
         type: string
-      repository-path:
+      repository-module:
         description: 'Maven repository username'
         required: false
         default: 'QuantumTop/quantum-web'
@@ -108,7 +108,7 @@ on:
       artifact-version:
         description: 'Version of the deployed artifact'
         value: ${{ jobs.build-deploy.outputs.version }}
-      repository-path:
+      repository-module:
         description: 'Maven repository username'
         required: false
         default: 'QuantumTop/quantum-web'
@@ -140,7 +140,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          repository: ${{ inputs.repository-path }}   # 👈 显式指定
+          repository: ${{ inputs.repository-module }}   # 👈 显式指定
           ref: ${{ github.ref }}
           
       - name: Set up JDK ${{ inputs.java-version }}
