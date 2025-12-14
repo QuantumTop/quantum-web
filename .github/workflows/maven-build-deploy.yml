@@ -1,4 +1,4 @@
-name: 'Maven Build and Deploy'
+name: 'Maven Build and Deploy - Web'
 
 on:
   workflow_dispatch:
@@ -16,7 +16,7 @@ on:
       maven-options:
         description: 'Additional Maven options'
         required: false
-        default: ''
+        default: '-T 2C'
         type: string
       working-directory:
         description: 'Working directory for the Maven project'
@@ -49,9 +49,14 @@ on:
         default: 'lunarstra-quantum'
         type: string
       repository-module:
-        description: 'Maven repository username'
+        description: 'Maven repository path'
         required: false
         default: 'QuantumTop/quantum-web'
+        type: string
+      built-modules:
+        description: 'Comma-separated list of already built modules'
+        required: false
+        default: ''
         type: string
   workflow_call:
     inputs:
@@ -68,7 +73,7 @@ on:
       maven-options:
         description: 'Additional Maven options'
         required: false
-        default: ''
+        default: '-T 2C'
         type: string
       working-directory:
         description: 'Working directory for the Maven project'
@@ -100,6 +105,16 @@ on:
         required: false
         default: 'cnb'
         type: string
+      repository-module:
+        description: 'Maven repository path'
+        required: false
+        default: 'QuantumTop/quantum-web'
+        type: string
+      built-modules:
+        description: 'Comma-separated list of already built modules'
+        required: false
+        default: ''
+        type: string
     secrets:
       MAVEN_TOKEN:
         description: 'Maven repository authentication token'
@@ -107,16 +122,17 @@ on:
     outputs:
       artifact-version:
         description: 'Version of the deployed artifact'
-        value: ${{ jobs.build-deploy.outputs.version }}
-      repository-module:
-        description: 'Maven repository username'
-        required: false
-        default: 'QuantumTop/quantum-web'
-        type: string
+        value: ${{ jobs.quantum-web-deploy.outputs.version }}
+      built-modules:
+        description: 'Updated list of built modules'
+        value: ${{ jobs.quantum-web-deploy.outputs.built-modules }}
+      skipped:
+        description: 'Whether this module was skipped'
+        value: ${{ jobs.quantum-web-deploy.outputs.skipped }}
 
 jobs:
   quantum-parent-deploy:
-    uses: lunarstra/Quantum/.github/workflows/maven-build-deploy.yml@main
+    uses: QuantumTop/quantum-parent/.github/workflows/maven-build-deploy.yml@main
     with:
       java-version: ${{ inputs.java-version }}
       distribution: ${{ inputs.distribution }}
@@ -127,23 +143,93 @@ jobs:
       server-id: ${{ inputs.server-id }}
       repository-url: ${{ inputs.repository-url }}
       profile-id: ${{ inputs.profile-id }}
+      built-modules: ${{ inputs.built-modules }}
     secrets:
       MAVEN_TOKEN: ${{ secrets.MAVEN_TOKEN }}
 
-  build-deploy:
+  quantum-lib-deploy:
     needs: quantum-parent-deploy
+    uses: QuantumTop/quantum-lib/.github/workflows/maven-build-deploy.yml@main
+    with:
+      java-version: ${{ inputs.java-version }}
+      distribution: ${{ inputs.distribution }}
+      maven-options: ${{ inputs.maven-options }}
+      working-directory: ${{ inputs.working-directory }}
+      skip-tests: ${{ inputs.skip-tests }}
+      maven-username: ${{ inputs.maven-username }}
+      server-id: ${{ inputs.server-id }}
+      repository-url: ${{ inputs.repository-url }}
+      profile-id: ${{ inputs.profile-id }}
+      built-modules: ${{ needs.quantum-parent-deploy.outputs.built-modules }}
+    secrets:
+      MAVEN_TOKEN: ${{ secrets.MAVEN_TOKEN }}
+
+  quantum-common-deploy:
+    needs: quantum-lib-deploy
+    uses: QuantumTop/quantum-common/.github/workflows/maven-build-deploy.yml@main
+    with:
+      java-version: ${{ inputs.java-version }}
+      distribution: ${{ inputs.distribution }}
+      maven-options: ${{ inputs.maven-options }}
+      working-directory: ${{ inputs.working-directory }}
+      skip-tests: ${{ inputs.skip-tests }}
+      maven-username: ${{ inputs.maven-username }}
+      server-id: ${{ inputs.server-id }}
+      repository-url: ${{ inputs.repository-url }}
+      profile-id: ${{ inputs.profile-id }}
+      built-modules: ${{ needs.quantum-lib-deploy.outputs.built-modules }}
+    secrets:
+      MAVEN_TOKEN: ${{ secrets.MAVEN_TOKEN }}
+  quantum-plugin-deploy:
+    needs: quantum-lib-deploy
+    uses: QuantumTop/quantum-plugin/.github/workflows/maven-build-deploy.yml@main
+    with:
+      java-version: ${{ inputs.java-version }}
+      distribution: ${{ inputs.distribution }}
+      maven-options: ${{ inputs.maven-options }}
+      working-directory: ${{ inputs.working-directory }}
+      skip-tests: ${{ inputs.skip-tests }}
+      maven-username: ${{ inputs.maven-username }}
+      server-id: ${{ inputs.server-id }}
+      repository-url: ${{ inputs.repository-url }}
+      profile-id: ${{ inputs.profile-id }}
+      built-modules: ${{ needs.quantum-common-deploy.outputs.built-modules }}
+    secrets:
+      MAVEN_TOKEN: ${{ secrets.MAVEN_TOKEN }}
+
+
+  quantum-web-deploy:
+    needs: quantum-plugin-deploy
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.get-version.outputs.version }}
+      built-modules: ${{ steps.update-built-modules.outputs.built-modules }}
+      skipped: ${{ steps.check-if-built.outputs.skipped }}
 
     steps:
+      - name: Check if module already built
+        id: check-if-built
+        run: |
+          MODULE_NAME="${{inputs.repository-module}}"
+          BUILT_MODULES="${{ needs.quantum-lib-deploy.outputs.built-modules }}"
+          
+          if [[ ",$BUILT_MODULES," == *",$MODULE_NAME,"* ]]; then
+            echo "⏭️  Module '$MODULE_NAME' already built, skipping..."
+            echo "skipped=true" >> $GITHUB_OUTPUT
+          else
+            echo "🔨 Module '$MODULE_NAME' needs to be built"
+            echo "skipped=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Checkout code
+        if: steps.check-if-built.outputs.skipped == 'false'
         uses: actions/checkout@v4
         with:
-          repository: ${{ inputs.repository-module }}   # 👈 显式指定
+          repository: ${{ inputs.repository-module }}
           ref: ${{ github.ref }}
-          
+
       - name: Set up JDK ${{ inputs.java-version }}
+        if: steps.check-if-built.outputs.skipped == 'false'
         uses: actions/setup-java@v4
         with:
           java-version: ${{ inputs.java-version }}
@@ -151,57 +237,58 @@ jobs:
           cache: 'maven'
 
       - name: Configure Maven settings
-        run: |
-          mkdir -p ~/.m2
-          cat > ~/.m2/settings.xml << 'EOF'
-          <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
-                    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-                    xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0
-                                        http://maven.apache.org/xsd/settings-1.0.0.xsd">
-            <servers>
-              <server>
-                <id>${SERVER_ID}</id>
-                <username>${MAVEN_USERNAME}</username>
-                <password>${MAVEN_TOKEN}</password>
-              </server>
-            </servers>
-            <profiles>
-              <profile>
-                <id>${PROFILE_ID}</id>
-                <repositories>
-                  <repository>
-                    <id>${SERVER_ID}</id>
-                    <url>${REPOSITORY_URL}</url>
-                    <releases>
-                      <enabled>true</enabled>
-                    </releases>
-                    <snapshots>
-                      <enabled>true</enabled>
-                    </snapshots>
-                  </repository>
-                </repositories>
-                <pluginRepositories>
-                  <pluginRepository>
-                    <id>${SERVER_ID}</id>
-                    <url>${REPOSITORY_URL}</url>
-                  </pluginRepository>
-                </pluginRepositories>
-              </profile>
-            </profiles>
-            <activeProfiles>
-              <activeProfile>${PROFILE_ID}</activeProfile>
-            </activeProfiles>
-          </settings>
-          EOF
-          
-          # Replace placeholders with actual values
-          sed -i "s|\${SERVER_ID}|${{ inputs.server-id }}|g" ~/.m2/settings.xml
-          sed -i "s|\${MAVEN_USERNAME}|${{ inputs.maven-username }}|g" ~/.m2/settings.xml
-          sed -i "s|\${MAVEN_TOKEN}|${{ secrets.MAVEN_TOKEN }}|g" ~/.m2/settings.xml
-          sed -i "s|\${PROFILE_ID}|${{ inputs.profile-id }}|g" ~/.m2/settings.xml
-          sed -i "s|\${REPOSITORY_URL}|${{ inputs.repository-url }}|g" ~/.m2/settings.xml
+        if: steps.check-if-built.outputs.skipped == 'false'
+        uses: whelk-io/maven-settings-xml-action@v22
+        with:
+          servers: |
+            [
+              {
+                "id": "${{ inputs.server-id }}",
+                "username": "${{ inputs.maven-username }}",
+                "password": "${{ secrets.MAVEN_TOKEN }}"
+              }
+            ]
+          repositories: |
+            [
+              {
+                "id": "central",
+                "url": "https://repo.maven.apache.org/maven2",
+                "releases": {
+                  "enabled": "true"
+                },
+                "snapshots": {
+                  "enabled": "false"
+                }
+              },
+              {
+                "id": "${{ inputs.server-id }}",
+                "url": "${{ inputs.repository-url }}",
+                "releases": {
+                  "enabled": "true"
+                },
+                "snapshots": {
+                  "enabled": "true"
+                }
+              }
+            ]
+          plugin_repositories: |
+            [
+              {
+                "id": "central",
+                "url": "https://repo.maven.apache.org/maven2"
+              },
+              {
+                "id": "${{ inputs.server-id }}",
+                "url": "${{ inputs.repository-url }}"
+              }
+            ]
+          active_profiles: |
+            [
+              "${{ inputs.profile-id }}"
+            ]
 
       - name: Make mvnw executable
+        if: steps.check-if-built.outputs.skipped == 'false'
         working-directory: ${{ inputs.working-directory }}
         run: |
           if [ -f "./mvnw" ]; then
@@ -211,14 +298,15 @@ jobs:
           fi
 
       - name: Get project version
+        if: steps.check-if-built.outputs.skipped == 'false'
         id: get-version
         working-directory: ${{ inputs.working-directory }}
         run: |
           if [ -f "pom.xml" ]; then
             if [ -f "./mvnw" ]; then
-              VERSION=$(./mvnw help:evaluate -Dexpression=project.version -q -DforceStdout)
+              VERSION=$(./mvnw help:evaluate -Dexpression=project.version -q -DforceStdout -N)
             else
-              VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+              VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout -N)
             fi
             echo "version=$VERSION" >> $GITHUB_OUTPUT
             echo "✅ Project version: $VERSION"
@@ -228,6 +316,7 @@ jobs:
           fi
 
       - name: Build and deploy to Maven repository
+        if: steps.check-if-built.outputs.skipped == 'false'
         working-directory: ${{ inputs.working-directory }}
         run: |
           MVN_CMD="./mvnw"
@@ -248,8 +337,29 @@ jobs:
           echo "🚀 Executing: $MVN_CMD $MVN_ARGS"
           $MVN_CMD $MVN_ARGS
 
+      - name: Update built modules list
+        id: update-built-modules
+        run: |
+          MODULE_NAME="${{inputs.repository-module}}"
+          BUILT_MODULES="${{ needs.quantum-lib-deploy.outputs.built-modules }}"  # 🔧 修复：使用 lib 的输出而不是 parent 的
+          
+          if [ "${{ steps.check-if-built.outputs.skipped }}" == "false" ]; then
+            # Add current module to the list
+            if [ -z "$BUILT_MODULES" ]; then
+              NEW_BUILT_MODULES="$MODULE_NAME"
+            else
+              NEW_BUILT_MODULES="$BUILT_MODULES,$MODULE_NAME"
+            fi
+          else
+            # Keep the list as is
+            NEW_BUILT_MODULES="$BUILT_MODULES"
+          fi
+          
+          echo "built-modules=$NEW_BUILT_MODULES" >> $GITHUB_OUTPUT
+          echo "📦 Built modules: $NEW_BUILT_MODULES"
+
       - name: Summary
-        if: success()
+        if: success() && steps.check-if-built.outputs.skipped == 'false'
         run: |
           echo "## ✅ Deployment Successful :rocket:" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -263,6 +373,13 @@ jobs:
           echo "| **Distribution** | ${{ inputs.distribution }} |" >> $GITHUB_STEP_SUMMARY
           echo "| **Tests Skipped** | ${{ inputs.skip-tests }} |" >> $GITHUB_STEP_SUMMARY
           echo "| **Working Directory** | ${{ inputs.working-directory }} |" >> $GITHUB_STEP_SUMMARY
+
+      - name: Skip Summary
+        if: success() && steps.check-if-built.outputs.skipped == 'true'
+        run: |
+          echo "## ⏭️  Build Skipped" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**quantum-web** was already built in this workflow run." >> $GITHUB_STEP_SUMMARY
 
       - name: Failure Summary
         if: failure()
